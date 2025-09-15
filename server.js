@@ -140,16 +140,6 @@ app.get('/oauth/callback', async (req, res) => {
         const { access_token } = tokenResponse.data;
         console.log('✅ Got access token from Memberful');
 
-      // Test med enklare anrop först
-console.log('Testing token with simple request...');
-const testResponse = await axios.get(`${CONFIG.MEMBERFUL_BASE_URL}/api/graphql`, {
-    headers: {
-        'Authorization': `Bearer ${access_token}`,
-        'Accept': 'application/json'
-    }
-});
-console.log('Simple request success:', testResponse.status);
-
 // Tillfälligt mockad användardata för test
 const memberData = {
     id: '123456',

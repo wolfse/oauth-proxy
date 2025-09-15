@@ -50,13 +50,16 @@ app.get('/oauth/authorize', (req, res) => {
         });
     }
 
-    // Kontrollera att det är en mobil app
-    if (!redirect_uri || !redirect_uri.startsWith('com.paperton')) {
-        return res.status(400).json({ 
-            error: 'invalid_request',
-            error_description: 'This endpoint only supports mobile app redirects'
-        });
-    }
+// Acceptera både mobil och webb redirects
+const isMobileApp = redirect_uri && redirect_uri.startsWith('com.paperton');
+const isWebApp = redirect_uri && (redirect_uri.startsWith('https://') || redirect_uri.startsWith('http://'));
+
+if (!isMobileApp && !isWebApp) {
+    return res.status(400).json({ 
+        error: 'invalid_request',
+        error_description: 'Unsupported redirect URI format'
+    });
+}
 
     if (response_type !== 'code') {
         return res.status(400).json({ 
@@ -199,18 +202,35 @@ app.post('/oauth/token', async (req, res) => {
         });
     }
 
-    // Validera client credentials
-    if (client_id !== 'prenly-mobile' || client_secret !== CONFIG.PRENLY_CLIENT_SECRET) {
-        console.error('❌ Invalid client credentials:', { 
-            provided_client_id: client_id,
-            expected_client_id: 'prenly-mobile',
-            secret_match: client_secret === CONFIG.PRENLY_CLIENT_SECRET
-        });
-        return res.status(401).json({ 
-            error: 'invalid_client',
-            error_description: 'Invalid client credentials'
-        });
+   // Validera client credentials - hantera både POST body och headers
+let clientId = req.body.client_id;
+let clientSecret = req.body.client_secret;
+
+// Fallback till Authorization header om POST body saknas
+if (!clientId || !clientSecret) {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Basic ')) {
+        const base64Credentials = authHeader.split(' ')[1];
+        const credentials = Buffer.from(base64Credentials, 'base64').toString('ascii');
+        [clientId, clientSecret] = credentials.split(':');
     }
+}
+
+console.log('Token request validation:', { 
+    provided_client_id: clientId,
+    expected_client_id: 'prenly-mobile',
+    client_id_match: clientId === 'prenly-mobile',
+    has_client_secret: !!clientSecret,
+    secret_match: clientSecret === CONFIG.PRENLY_CLIENT_SECRET
+});
+
+if (clientId !== 'prenly-mobile' || clientSecret !== CONFIG.PRENLY_CLIENT_SECRET) {
+    console.error('❌ Invalid client credentials');
+    return res.status(401).json({ 
+        error: 'invalid_client',
+        error_description: 'Invalid client credentials'
+    });
+}
 
     const tokenData = userTokens.get(code);
     if (!tokenData) {

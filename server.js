@@ -215,7 +215,15 @@ if (!clientId || !clientSecret) {
         [clientId, clientSecret] = credentials.split(':');
     }
 }
-
+console.log('CREDENTIAL DEBUG:', {
+    post_body_client_id: req.body.client_id,
+    post_body_client_secret: req.body.client_secret ? 'present' : 'missing',
+    auth_header: req.headers.authorization ? req.headers.authorization.substring(0, 20) + '...' : 'missing',
+    extracted_client_id: clientId,
+    extracted_secret: clientSecret ? clientSecret.substring(0, 10) + '...' : 'missing',
+    expected_secret: CONFIG.PRENLY_CLIENT_SECRET ? CONFIG.PRENLY_CLIENT_SECRET.substring(0, 10) + '...' : 'missing',
+    match: clientSecret === CONFIG.PRENLY_CLIENT_SECRET
+});
 console.log('Token request validation:', { 
     provided_client_id: clientId,
     expected_client_id: 'prenly-mobile',

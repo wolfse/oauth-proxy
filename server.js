@@ -416,7 +416,44 @@ app.post('/oauth2/getUser', async (req, res) => {
         });
     }
 });
+/**
+ * OpenID Connect UserInfo endpoint
+ * GET /userinfo
+ */
+app.get('/userinfo', async (req, res) => {
+    const authHeader = req.headers.authorization;
+    
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ 
+            error: 'invalid_token',
+            error_description: 'Bearer token required'
+        });
+    }
 
+    const accessToken = authHeader.split(' ')[1];
+    const tokenData = userTokens.get(accessToken);
+
+    if (!tokenData) {
+        return res.status(401).json({ 
+            error: 'invalid_token',
+            error_description: 'Invalid or expired access token'
+        });
+    }
+
+    console.log('✅ UserInfo request for user:', tokenData.uid);
+
+    // OpenID Connect UserInfo response enligt Prenly spec
+    const userInfo = {
+        sub: tokenData.uid,  // Required: Subject identifier
+        
+        // Optional user identification (för "inloggad som Anna/Johan")
+        name: tokenData.memberData?.fullName,
+        given_name: tokenData.memberData?.fullName ? tokenData.memberData.fullName.split(' ')[0] : undefined,
+        family_name: tokenData.memberData?.fullName ? tokenData.memberData.fullName.split(' ').slice(1).join(' ') : undefined,
+        email: tokenData.memberData?.email,
+        
+        // Custom claim för Prenly: produktkoder
+        products: ['AOW']  // All
 // === HJÄLP-ENDPOINTS ===
 
 /**

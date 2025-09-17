@@ -454,6 +454,17 @@ app.get('/userinfo', async (req, res) => {
         
         // Custom claim för Prenly: produktkoder
         products: ['AOW']  // All
+            };
+
+    // Ta bort undefined-värden
+    Object.keys(userInfo).forEach(key => {
+        if (userInfo[key] === undefined) {
+            delete userInfo[key];
+        }
+    });
+
+    res.json(userInfo);
+});
 // === HJÄLP-ENDPOINTS ===
 
 /**

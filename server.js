@@ -269,6 +269,7 @@ if (clientId !== 'prenly-mobile' || clientSecret !== CONFIG.PRENLY_CLIENT_SECRET
     };
 
     console.log('✅ Token provided to mobile app');
+    console.log('DEBUG - Access token for testing:', proxyAccessToken);
     res.json(response);
 });
 

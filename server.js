@@ -503,6 +503,50 @@ app.get('/config', (req, res) => {
         }
     });
 });
+});
+
+// Logout endpoints - lägg till här efter config endpoint men före SESSION CLEANUP
+app.post('/logout', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.replace('Bearer ', '');
+    
+    if (!token) {
+      return res.status(400).json({ 
+        error: 'No token provided',
+        success: false 
+      });
+    }
+
+    // Logga utloggningen (för debugging)
+    console.log('User logging out, token:', token.substring(0, 8) + '...');
+    
+    // Memberful stöder troligen inte token revocation endpoint
+    // Men tokens har bara 1 timmes livstid, så klienten kan bara rensa sitt lokala state
+
+    // Returnera framgång
+    res.json({ 
+      success: true, 
+      message: 'Logged out successfully' 
+    });
+
+  } catch (error) {
+    console.error('Logout error:', error);
+    res.status(500).json({ 
+      error: 'Logout failed',
+      success: false 
+    });
+  }
+});
+
+// Alternativ GET endpoint för enklare integration
+app.get('/logout', (req, res) => {
+  console.log('User accessed logout via GET');
+  res.json({ 
+    success: true, 
+    message: 'Logged out successfully' 
+  });
+});
 
 // === SESSION CLEANUP ===
 

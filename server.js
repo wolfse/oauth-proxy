@@ -417,6 +417,7 @@ app.post('/oauth2/getUser', async (req, res) => {
         });
     }
 });
+
 /**
  * OpenID Connect UserInfo endpoint
  * GET /userinfo
@@ -454,8 +455,8 @@ app.get('/userinfo', async (req, res) => {
         email: tokenData.memberData?.email,
         
         // Custom claim för Prenly: produktkoder
-        products: ['AOW']  // All
-            };
+        products: ['AOW']
+    };
 
     // Ta bort undefined-värden
     Object.keys(userInfo).forEach(key => {
@@ -466,6 +467,7 @@ app.get('/userinfo', async (req, res) => {
 
     res.json(userInfo);
 });
+
 // === HJÄLP-ENDPOINTS ===
 
 /**
@@ -503,49 +505,57 @@ app.get('/config', (req, res) => {
         }
     });
 });
-});
 
-// Logout endpoints - lägg till här efter config endpoint men före SESSION CLEANUP
+// === LOGOUT ENDPOINTS ===
+
+/**
+ * Logout endpoint - POST method
+ */
 app.post('/logout', async (req, res) => {
-  try {
-    const authHeader = req.headers.authorization;
-    const token = authHeader?.replace('Bearer ', '');
-    
-    if (!token) {
-      return res.status(400).json({ 
-        error: 'No token provided',
-        success: false 
-      });
+    try {
+        const authHeader = req.headers.authorization;
+        const token = authHeader?.replace('Bearer ', '');
+        
+        if (!token) {
+            return res.status(400).json({ 
+                error: 'No token provided',
+                success: false 
+            });
+        }
+
+        // Logga utloggningen (för debugging)
+        console.log('User logging out, token:', token.substring(0, 8) + '...');
+        
+        // Ta bort token från minnet (om det finns)
+        if (userTokens.has(token)) {
+            userTokens.delete(token);
+            console.log('✅ Token removed from server');
+        }
+
+        // Returnera framgång
+        res.json({ 
+            success: true, 
+            message: 'Logged out successfully' 
+        });
+
+    } catch (error) {
+        console.error('Logout error:', error);
+        res.status(500).json({ 
+            error: 'Logout failed',
+            success: false 
+        });
     }
-
-    // Logga utloggningen (för debugging)
-    console.log('User logging out, token:', token.substring(0, 8) + '...');
-    
-    // Memberful stöder troligen inte token revocation endpoint
-    // Men tokens har bara 1 timmes livstid, så klienten kan bara rensa sitt lokala state
-
-    // Returnera framgång
-    res.json({ 
-      success: true, 
-      message: 'Logged out successfully' 
-    });
-
-  } catch (error) {
-    console.error('Logout error:', error);
-    res.status(500).json({ 
-      error: 'Logout failed',
-      success: false 
-    });
-  }
 });
 
-// Alternativ GET endpoint för enklare integration
+/**
+ * Logout endpoint - GET method (för enklare integration)
+ */
 app.get('/logout', (req, res) => {
-  console.log('User accessed logout via GET');
-  res.json({ 
-    success: true, 
-    message: 'Logged out successfully' 
-  });
+    console.log('User accessed logout via GET');
+    res.json({ 
+        success: true, 
+        message: 'Logged out successfully' 
+    });
 });
 
 // === SESSION CLEANUP ===
@@ -599,6 +609,8 @@ app.listen(CONFIG.PORT, () => {
     console.log(`   - Mobile OAuth: ${CONFIG.BRIDGE_BASE_URL}/oauth/authorize`);
     console.log(`   - Token: ${CONFIG.BRIDGE_BASE_URL}/oauth/token`);
     console.log(`   - GetUser: ${CONFIG.BRIDGE_BASE_URL}/oauth2/getUser`);
+    console.log(`   - UserInfo: ${CONFIG.BRIDGE_BASE_URL}/userinfo`);
+    console.log(`   - Logout: ${CONFIG.BRIDGE_BASE_URL}/logout`);
     console.log(`   - Health: ${CONFIG.BRIDGE_BASE_URL}/health`);
     console.log(`   - Config: ${CONFIG.BRIDGE_BASE_URL}/config`);
     console.log(`✅ Ready for Prenly integration`);

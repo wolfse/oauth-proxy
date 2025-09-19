@@ -27,9 +27,14 @@ const CONFIG = {
 
 const userTokens = new Map();
 const sessions = new Map();
+const refreshTokens = new Map(); // Ny Map för refresh tokens
 
 function generateState() {
     return crypto.randomBytes(16).toString('hex');
+}
+
+function generateRefreshToken() {
+    return crypto.randomBytes(32).toString('hex'); // Längre än access tokens
 }
 
 // === MOBIL APP OAUTH2 BRIDGE ===
@@ -50,16 +55,16 @@ app.get('/oauth/authorize', (req, res) => {
         });
     }
 
-// Acceptera både mobil och webb redirects
-const isMobileApp = redirect_uri && redirect_uri.startsWith('com.paperton');
-const isWebApp = redirect_uri && (redirect_uri.startsWith('https://') || redirect_uri.startsWith('http://'));
+    // Acceptera både mobil och webb redirects
+    const isMobileApp = redirect_uri && redirect_uri.startsWith('com.paperton');
+    const isWebApp = redirect_uri && (redirect_uri.startsWith('https://') || redirect_uri.startsWith('http://'));
 
-if (!isMobileApp && !isWebApp) {
-    return res.status(400).json({ 
-        error: 'invalid_request',
-        error_description: 'Unsupported redirect URI format'
-    });
-}
+    if (!isMobileApp && !isWebApp) {
+        return res.status(400).json({ 
+            error: 'invalid_request',
+            error_description: 'Unsupported redirect URI format'
+        });
+    }
 
     if (response_type !== 'code') {
         return res.status(400).json({ 
@@ -143,13 +148,13 @@ app.get('/oauth/callback', async (req, res) => {
         const { access_token } = tokenResponse.data;
         console.log('✅ Got access token from Memberful');
 
-// Tillfälligt mockad användardata för test
-const memberData = {
-    id: '123456',
-    email: 'test@alltomwhisky.se',
-    fullName: 'Test User',
-    subscriptions: [{ id: '1', plan: { id: '1', name: 'Premium' }, active: true }]
-};
+        // Tillfälligt mockad användardata för test
+        const memberData = {
+            id: '123456',
+            email: 'test@alltomwhisky.se',
+            fullName: 'Test User',
+            subscriptions: [{ id: '1', plan: { id: '1', name: 'Premium' }, active: true }]
+        };
 
         // Generera proxy authorization code för appen
         const proxyCode = generateState();
@@ -183,94 +188,180 @@ const memberData = {
 });
 
 /**
- * OAuth2 Token endpoint för mobila appar
+ * OAuth2 Token endpoint för mobila appar - MED REFRESH TOKEN STÖD
  */
 app.post('/oauth/token', async (req, res) => {
-    const { grant_type, code, client_id, client_secret } = req.body;
+    const { grant_type, code, client_id, client_secret, refresh_token } = req.body;
 
     console.log('📱 Token request from mobile app:', { 
         grant_type, 
         client_id, 
         code: code ? 'present' : 'missing',
-        client_secret: client_secret ? 'present' : 'missing'
+        client_secret: client_secret ? 'present' : 'missing',
+        refresh_token: refresh_token ? 'present' : 'missing'
     });
 
-    if (grant_type !== 'authorization_code') {
-        return res.status(400).json({ 
-            error: 'unsupported_grant_type',
-            error_description: 'Only authorization_code grant type is supported'
+    // Validera client credentials - hantera både POST body och headers
+    let clientId = req.body.client_id;
+    let clientSecret = req.body.client_secret;
+
+    // Fallback till Authorization header om POST body saknas
+    if (!clientId || !clientSecret) {
+        const authHeader = req.headers.authorization;
+        if (authHeader && authHeader.startsWith('Basic ')) {
+            const base64Credentials = authHeader.split(' ')[1];
+            const credentials = Buffer.from(base64Credentials, 'base64').toString('ascii');
+            [clientId, clientSecret] = credentials.split(':');
+        }
+    }
+
+    if (clientId !== 'prenly-mobile' || clientSecret !== CONFIG.PRENLY_CLIENT_SECRET) {
+        console.error('❌ Invalid client credentials');
+        return res.status(401).json({ 
+            error: 'invalid_client',
+            error_description: 'Invalid client credentials'
         });
     }
 
-   // Validera client credentials - hantera både POST body och headers
-let clientId = req.body.client_id;
-let clientSecret = req.body.client_secret;
+    // === AUTHORIZATION CODE FLOW ===
+    if (grant_type === 'authorization_code') {
+        const tokenData = userTokens.get(code);
+        if (!tokenData) {
+            return res.status(400).json({ 
+                error: 'invalid_grant',
+                error_description: 'Invalid or expired authorization code'
+            });
+        }
 
-// Fallback till Authorization header om POST body saknas
-if (!clientId || !clientSecret) {
-    const authHeader = req.headers.authorization;
-    if (authHeader && authHeader.startsWith('Basic ')) {
-        const base64Credentials = authHeader.split(' ')[1];
-        const credentials = Buffer.from(base64Credentials, 'base64').toString('ascii');
-        [clientId, clientSecret] = credentials.split(':');
-    }
-}
-console.log('CREDENTIAL DEBUG:', {
-    post_body_client_id: req.body.client_id,
-    post_body_client_secret: req.body.client_secret ? 'present' : 'missing',
-    auth_header: req.headers.authorization ? req.headers.authorization.substring(0, 20) + '...' : 'missing',
-    extracted_client_id: clientId,
-    extracted_secret: clientSecret ? clientSecret.substring(0, 10) + '...' : 'missing',
-    expected_secret: CONFIG.PRENLY_CLIENT_SECRET ? CONFIG.PRENLY_CLIENT_SECRET.substring(0, 10) + '...' : 'missing',
-    match: clientSecret === CONFIG.PRENLY_CLIENT_SECRET
-});
-console.log('Token request validation:', { 
-    provided_client_id: clientId,
-    expected_client_id: 'prenly-mobile',
-    client_id_match: clientId === 'prenly-mobile',
-    has_client_secret: !!clientSecret,
-    secret_match: clientSecret === CONFIG.PRENLY_CLIENT_SECRET
-});
-
-if (clientId !== 'prenly-mobile' || clientSecret !== CONFIG.PRENLY_CLIENT_SECRET) {
-    console.error('❌ Invalid client credentials');
-    return res.status(401).json({ 
-        error: 'invalid_client',
-        error_description: 'Invalid client credentials'
-    });
-}
-
-    const tokenData = userTokens.get(code);
-    if (!tokenData) {
-        return res.status(400).json({ 
-            error: 'invalid_grant',
-            error_description: 'Invalid or expired authorization code'
+        // Generera både access token och refresh token
+        const proxyAccessToken = generateState();
+        const proxyRefreshToken = generateRefreshToken();
+        
+        // Spara access token
+        userTokens.set(proxyAccessToken, {
+            uid: tokenData.uid,
+            memberful_access_token: tokenData.access_token,
+            memberData: tokenData.memberData,
+            timestamp: Date.now()
         });
+
+        // Spara refresh token (längre livstid)
+        refreshTokens.set(proxyRefreshToken, {
+            uid: tokenData.uid,
+            memberful_access_token: tokenData.access_token,
+            memberData: tokenData.memberData,
+            timestamp: Date.now()
+        });
+
+        // Ta bort authorization code (kan bara användas en gång)
+        userTokens.delete(code);
+
+        const response = {
+            access_token: proxyAccessToken,
+            refresh_token: proxyRefreshToken,
+            token_type: 'Bearer',
+            expires_in: 3600,
+            scope: 'read'
+        };
+
+        console.log('✅ Access token + refresh token provided to mobile app');
+        console.log('DEBUG - Access token for testing:', proxyAccessToken);
+        console.log('DEBUG - Refresh token for testing:', proxyRefreshToken);
+        res.json(response);
+        return;
     }
 
-    // Generera proxy access token
-    const proxyAccessToken = generateState();
-    userTokens.set(proxyAccessToken, {
-        uid: tokenData.uid,
-        memberful_access_token: tokenData.access_token,
-        memberData: tokenData.memberData,
-        timestamp: Date.now()
+    // === REFRESH TOKEN FLOW ===
+    if (grant_type === 'refresh_token') {
+        if (!refresh_token) {
+            return res.status(400).json({ 
+                error: 'invalid_request',
+                error_description: 'refresh_token parameter required'
+            });
+        }
+
+        const refreshData = refreshTokens.get(refresh_token);
+        if (!refreshData) {
+            return res.status(400).json({ 
+                error: 'invalid_grant',
+                error_description: 'Invalid or expired refresh token'
+            });
+        }
+
+        console.log('🔄 Refreshing access token for user:', refreshData.uid);
+
+        try {
+            // Försök först använda befintlig Memberful token
+            let memberfulToken = refreshData.memberful_access_token;
+            let memberData = refreshData.memberData;
+
+            // Testa om Memberful token fortfarande fungerar
+            try {
+                const testResponse = await axios.post(`${CONFIG.MEMBERFUL_BASE_URL}/api/graphql`, {
+                    query: '{ currentMember { id } }'
+                }, {
+                    headers: {
+                        'Authorization': `Bearer ${memberfulToken}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                if (!testResponse.data.data?.currentMember) {
+                    throw new Error('Memberful token expired');
+                }
+                
+            } catch (memberfulError) {
+                console.log('⚠️ Memberful token expired, refresh token invalid');
+                // Om Memberful token är ogiltigt, refresh token är också ogiltigt
+                refreshTokens.delete(refresh_token);
+                return res.status(400).json({ 
+                    error: 'invalid_grant',
+                    error_description: 'Refresh token expired - user must log in again'
+                });
+            }
+
+            // Generera ny access token
+            const newAccessToken = generateState();
+            
+            userTokens.set(newAccessToken, {
+                uid: refreshData.uid,
+                memberful_access_token: memberfulToken,
+                memberData: memberData,
+                timestamp: Date.now()
+            });
+
+            // Uppdatera refresh token timestamp
+            refreshTokens.set(refresh_token, {
+                ...refreshData,
+                timestamp: Date.now()
+            });
+
+            const response = {
+                access_token: newAccessToken,
+                token_type: 'Bearer',
+                expires_in: 3600,
+                scope: 'read'
+                // refresh_token behålls densamma
+            };
+
+            console.log('✅ Access token refreshed for user:', refreshData.uid);
+            res.json(response);
+            return;
+        } catch (error) {
+            console.error('❌ Error refreshing token:', error.message);
+            refreshTokens.delete(refresh_token);
+            return res.status(400).json({ 
+                error: 'invalid_grant',
+                error_description: 'Failed to refresh token - user must log in again'
+            });
+        }
+    }
+
+    // Okänd grant_type
+    return res.status(400).json({ 
+        error: 'unsupported_grant_type',
+        error_description: 'Only authorization_code and refresh_token grant types are supported'
     });
-
-    // Ta bort authorization code (kan bara användas en gång)
-    userTokens.delete(code);
-
-    const response = {
-        access_token: proxyAccessToken,
-        token_type: 'Bearer',
-        expires_in: 3600,
-        scope: 'read'
-        // INTE user_id här - Prenly hämtar det via getUser
-    };
-
-    console.log('✅ Token provided to mobile app');
-    console.log('DEBUG - Access token for testing:', proxyAccessToken);
-    res.json(response);
 });
 
 // === PRENLY REMOTE AUTHORITY API ===
@@ -471,13 +562,14 @@ app.get('/userinfo', async (req, res) => {
 // === HJÄLP-ENDPOINTS ===
 
 /**
- * Health check endpoint
+ * Health check endpoint - uppdaterad med refresh tokens
  */
 app.get('/health', (req, res) => {
     res.json({ 
         status: 'ok',
         timestamp: new Date().toISOString(),
-        activeTokens: userTokens.size,
+        activeAccessTokens: userTokens.size,
+        activeRefreshTokens: refreshTokens.size,
         activeSessions: sessions.size,
         bridge_url: CONFIG.BRIDGE_BASE_URL
     });
@@ -495,13 +587,16 @@ app.get('/config', (req, res) => {
             mobile_authorize: `${CONFIG.BRIDGE_BASE_URL}/oauth/authorize`,
             mobile_token: `${CONFIG.BRIDGE_BASE_URL}/oauth/token`,
             oauth2_getUser: `${CONFIG.BRIDGE_BASE_URL}/oauth2/getUser`,
+            userinfo: `${CONFIG.BRIDGE_BASE_URL}/userinfo`,
+            logout: `${CONFIG.BRIDGE_BASE_URL}/logout`,
             callback: `${CONFIG.BRIDGE_BASE_URL}/oauth/callback`,
             health: `${CONFIG.BRIDGE_BASE_URL}/health`
         },
         oauth_config: {
             client_id: 'prenly-mobile',
-            supported_grant_types: ['authorization_code'],
-            supported_scopes: ['read']
+            supported_grant_types: ['authorization_code', 'refresh_token'],
+            supported_scopes: ['read'],
+            features: ['refresh_tokens', 'logout', 'userinfo']
         }
     });
 });
@@ -509,7 +604,7 @@ app.get('/config', (req, res) => {
 // === LOGOUT ENDPOINTS ===
 
 /**
- * Logout endpoint - POST method
+ * Logout endpoint - POST method - uppdaterad för refresh tokens
  */
 app.post('/logout', async (req, res) => {
     try {
@@ -523,16 +618,27 @@ app.post('/logout', async (req, res) => {
             });
         }
 
-        // Logga utloggningen (för debugging)
         console.log('User logging out, token:', token.substring(0, 8) + '...');
         
-        // Ta bort token från minnet (om det finns)
+        let tokensRemoved = 0;
+
+        // Ta bort access token
         if (userTokens.has(token)) {
+            const tokenData = userTokens.get(token);
             userTokens.delete(token);
-            console.log('✅ Token removed from server');
+            tokensRemoved++;
+
+            // Hitta och ta bort associerade refresh tokens
+            for (const [refreshToken, refreshData] of refreshTokens) {
+                if (refreshData.uid === tokenData.uid) {
+                    refreshTokens.delete(refreshToken);
+                    tokensRemoved++;
+                }
+            }
         }
 
-        // Returnera framgång
+        console.log(`✅ Removed ${tokensRemoved} tokens for user`);
+
         res.json({ 
             success: true, 
             message: 'Logged out successfully' 
@@ -560,20 +666,30 @@ app.get('/logout', (req, res) => {
 
 // === SESSION CLEANUP ===
 
-// Rensa gamla sessioner och tokens varje 10 minuter
+// Rensa gamla sessioner och tokens varje 10 minuter - uppdaterad för refresh tokens
 setInterval(() => {
     const now = Date.now();
-    const tokenMaxAge = 60 * 60 * 1000; // 1 timme för tokens
+    const accessTokenMaxAge = 60 * 60 * 1000; // 1 timme för access tokens
+    const refreshTokenMaxAge = 30 * 24 * 60 * 60 * 1000; // 30 dagar för refresh tokens
     const sessionMaxAge = 10 * 60 * 1000; // 10 minuter för sessions
 
-    let cleanedTokens = 0;
+    let cleanedAccessTokens = 0;
+    let cleanedRefreshTokens = 0;
     let cleanedSessions = 0;
 
-    // Rensa gamla user tokens
+    // Rensa gamla access tokens
     for (const [key, data] of userTokens) {
-        if (now - data.timestamp > tokenMaxAge) {
+        if (now - data.timestamp > accessTokenMaxAge) {
             userTokens.delete(key);
-            cleanedTokens++;
+            cleanedAccessTokens++;
+        }
+    }
+
+    // Rensa gamla refresh tokens
+    for (const [key, data] of refreshTokens) {
+        if (now - data.timestamp > refreshTokenMaxAge) {
+            refreshTokens.delete(key);
+            cleanedRefreshTokens++;
         }
     }
 
@@ -585,8 +701,8 @@ setInterval(() => {
         }
     }
 
-    if (cleanedTokens > 0 || cleanedSessions > 0) {
-        console.log(`🧹 Cleanup: removed ${cleanedTokens} tokens, ${cleanedSessions} sessions`);
+    if (cleanedAccessTokens > 0 || cleanedRefreshTokens > 0 || cleanedSessions > 0) {
+        console.log(`🧹 Cleanup: removed ${cleanedAccessTokens} access tokens, ${cleanedRefreshTokens} refresh tokens, ${cleanedSessions} sessions`);
     }
 }, 10 * 60 * 1000);
 
@@ -613,7 +729,8 @@ app.listen(CONFIG.PORT, () => {
     console.log(`   - Logout: ${CONFIG.BRIDGE_BASE_URL}/logout`);
     console.log(`   - Health: ${CONFIG.BRIDGE_BASE_URL}/health`);
     console.log(`   - Config: ${CONFIG.BRIDGE_BASE_URL}/config`);
-    console.log(`✅ Ready for Prenly integration`);
+    console.log(`🎯 Features: OAuth2, OpenID Connect, Refresh Tokens, Logout`);
+    console.log(`✅ Ready for Prenly integration with 30-day sessions!`);
 });
 
 module.exports = app;

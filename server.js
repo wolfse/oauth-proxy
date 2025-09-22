@@ -657,11 +657,21 @@ app.post('/logout', async (req, res) => {
  * Logout endpoint - GET method (för enklare integration)
  */
 app.get('/logout', (req, res) => {
-    console.log('User accessed logout via GET');
-    res.json({ 
-        success: true, 
-        message: 'Logged out successfully' 
-    });
+    const { redirect_uri, post_logout_redirect_uri } = req.query;
+    const redirectUrl = redirect_uri || post_logout_redirect_uri;
+    
+    console.log('User accessed logout via GET', { redirectUrl });
+    
+    if (redirectUrl) {
+        // Redirect tillbaka till appen efter logout
+        res.redirect(redirectUrl);
+    } else {
+        // Ingen redirect - returnera JSON
+        res.json({ 
+            success: true, 
+            message: 'Logged out successfully' 
+        });
+    }
 });
 
 // === SESSION CLEANUP ===

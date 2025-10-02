@@ -148,13 +148,48 @@ app.get('/oauth/callback', async (req, res) => {
         const { access_token } = tokenResponse.data;
         console.log('✅ Got access token from Memberful');
 
-        // Tillfälligt mockad användardata för test
-        const memberData = {
-            id: '123456',
-            email: 'test@alltomwhisky.se',
-            fullName: 'Test User',
-            subscriptions: [{ id: '1', plan: { id: '1', name: 'Premium' }, active: true }]
-        };
+        // Hämta riktig användardata från Memberful
+        const userResponse = await axios.post(`${CONFIG.MEMBERFUL_BASE_URL}/api/graphql`, {
+            query: `
+                query {
+                    currentMember {
+                        id
+                        email
+                        fullName
+                        subscriptions {
+                            id
+                            plan {
+                                id
+                                name
+                            }
+                            active
+                        }
+                    }
+                }
+            `
+        }, {
+            headers: {
+                'Authorization': `Bearer ${access_token}`,
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            }
+        });
+
+        const memberData = userResponse.data.data.currentMember;
+        
+        if (!memberData) {
+            console.error('❌ No member data from Memberful');
+            return res.status(500).json({ 
+                error: 'oauth_error',
+                error_description: 'Failed to fetch user data from Memberful'
+            });
+        }
+        
+        console.log('✅ Got member data:', { 
+            id: memberData.id, 
+            email: memberData.email,
+            subscriptions: memberData.subscriptions.length 
+        });
 
         // Generera proxy authorization code för appen
         const proxyCode = generateState();

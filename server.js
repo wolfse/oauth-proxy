@@ -550,8 +550,8 @@ app.get('/userinfo', async (req, res) => {
         family_name: tokenData.memberData?.fullName ? tokenData.memberData.fullName.split(' ').slice(1).join(' ') : undefined,
         email: tokenData.memberData?.email,
         
-        // Custom claim för Prenly: produktkoder
-        products: ['AOW']
+        // Custom claim för Prenly: produktkoder (lägg till "bilaga" för tillgång till bilagor)
+        products: ['AOW', 'bilaga']
     };
 
     // Ta bort undefined-värden

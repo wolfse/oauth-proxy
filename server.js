@@ -149,18 +149,31 @@ const { access_token } = tokenResponse.data;
 console.log('✅ Got access token from Memberful');
 console.log('DEBUG - Full token response:', JSON.stringify(tokenResponse.data));
 
-        // Använd mockad testdata - Memberful OAuth tokens fungerar inte med deras user API
-        const memberData = {
-            id: '123456',
-            email: 'test@alltomwhisky.se',
-            fullName: 'Test User',
-            subscriptions: [{ id: '1', plan: { id: '1', name: 'Premium' }, active: true }]
-        };
-        
-        console.log('✅ Using test member data:', { 
-            id: memberData.id, 
-            email: memberData.email
-        });
+    // Hämta riktig användardata från Memberful REST API
+let memberData;
+try {
+    const memberResponse = await axios.get(`${CONFIG.MEMBERFUL_BASE_URL}/api/json/member.json`, {
+        headers: {
+            'Authorization': `Bearer ${access_token}`,
+            'Accept': 'application/json'
+        }
+    });
+    const m = memberResponse.data.member;
+    memberData = {
+        id: String(m.id),
+        email: m.email,
+        fullName: m.full_name,
+        subscriptions: (m.subscriptions || []).map(sub => ({
+            id: String(sub.id),
+            plan: { id: String(sub.plan.id), name: sub.plan.name },
+            active: sub.active
+        }))
+    };
+    console.log('✅ Got real member data:', { id: memberData.id, email: memberData.email, plans: memberData.subscriptions.map(s => s.plan.name) });
+} catch (memberError) {
+    console.error('❌ Failed to fetch member data:', memberError.response?.data || memberError.message);
+    throw memberError;
+}
 
         // Generera proxy authorization code för appen
         const proxyCode = generateState();

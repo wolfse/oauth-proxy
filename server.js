@@ -37,7 +37,7 @@ function generateRefreshToken() {
 app.get('/oauth/authorize', (req, res) => {
     const { client_id, redirect_uri, response_type = 'code', state } = req.query;
 
-    console.log('📱 Mobile OAuth request:', { client_id, redirect_uri, scope: 'read profile', state });
+    console.log('📱 Mobile OAuth request:', { client_id, redirect_uri, scope: 'read', state });
 
     if (client_id !== 'prenly-mobile') {
         return res.status(400).json({ error: 'invalid_client_id', error_description: 'Invalid client_id' });
@@ -65,7 +65,7 @@ app.get('/oauth/authorize', (req, res) => {
     memberfulAuthUrl.searchParams.set('response_type', 'code');
     memberfulAuthUrl.searchParams.set('client_id', CONFIG.MEMBERFUL_CLIENT_ID);
     memberfulAuthUrl.searchParams.set('redirect_uri', `${CONFIG.BRIDGE_BASE_URL}/oauth/callback`);
-    memberfulAuthUrl.searchParams.set('scope', 'read profile');
+    memberfulAuthUrl.searchParams.set('scope', 'read');
     memberfulAuthUrl.searchParams.set('state', sessionId);
 
     console.log('🔄 Redirecting to Memberful:', memberfulAuthUrl.toString());
@@ -110,31 +110,52 @@ app.get('/oauth/callback', async (req, res) => {
 
         const { access_token } = tokenResponse.data;
         console.log('✅ Got access token from Memberful');
-        console.log('DEBUG - Full token response:', JSON.stringify(tokenResponse.data));
 
-        // Hämta användardata via Memberful OAuth userinfo endpoint
+        // Hämta användardata via Memberful GraphQL API med OAuth token
         let memberData;
         try {
-            const memberResponse = await axios.get(`${CONFIG.MEMBERFUL_BASE_URL}/oauth/userinfo`, {
+            const memberResponse = await axios.post(`${CONFIG.MEMBERFUL_BASE_URL}/api/graphql`, {
+                query: `{
+                    currentMember {
+                        id
+                        email
+                        fullName
+                        subscriptions {
+                            id
+                            active
+                            plan { id name }
+                        }
+                    }
+                }`
+            }, {
                 headers: {
                     'Authorization': `Bearer ${access_token}`,
+                    'Content-Type': 'application/json',
                     'Accept': 'application/json'
                 }
             });
 
-            const m = memberResponse.data;
-            console.log('DEBUG - Userinfo response:', JSON.stringify(m));
+            console.log('DEBUG - GraphQL response:', JSON.stringify(memberResponse.data));
 
-            if (!m || !m.sub) throw new Error('No member data in response');
+            const m = memberResponse.data.data?.currentMember;
+            if (!m) throw new Error('No currentMember in GraphQL response');
 
             memberData = {
-                id: String(m.sub),
+                id: String(m.id),
                 email: m.email,
-                fullName: m.name || '',
-                subscriptions: []
+                fullName: m.fullName || '',
+                subscriptions: (m.subscriptions || []).map(sub => ({
+                    id: String(sub.id),
+                    plan: { id: String(sub.plan.id), name: sub.plan.name },
+                    active: sub.active
+                }))
             };
 
-            console.log('✅ Got real member data:', { id: memberData.id, email: memberData.email, name: memberData.fullName });
+            console.log('✅ Got real member data:', { 
+                id: memberData.id, 
+                email: memberData.email,
+                plans: memberData.subscriptions.map(s => s.plan.name)
+            });
 
         } catch (memberError) {
             console.error('❌ Failed to fetch member data:', memberError.response?.data || memberError.message);
@@ -245,10 +266,15 @@ app.post('/oauth/token', async (req, res) => {
         try {
             // Testa om Memberful token fortfarande fungerar
             try {
-                const testResponse = await axios.get(`${CONFIG.MEMBERFUL_BASE_URL}/oauth/userinfo`, {
-                    headers: { 'Authorization': `Bearer ${refreshData.memberful_access_token}`, 'Accept': 'application/json' }
+                const testResponse = await axios.post(`${CONFIG.MEMBERFUL_BASE_URL}/api/graphql`, {
+                    query: '{ currentMember { id } }'
+                }, {
+                    headers: {
+                        'Authorization': `Bearer ${refreshData.memberful_access_token}`,
+                        'Content-Type': 'application/json'
+                    }
                 });
-                if (!testResponse.data?.sub) throw new Error('Memberful token expired');
+                if (!testResponse.data.data?.currentMember) throw new Error('Memberful token expired');
             } catch (memberfulError) {
                 console.log('⚠️ Memberful token expired, refresh token invalid');
                 refreshTokens.delete(refresh_token);
@@ -309,23 +335,21 @@ app.post('/oauth2/getUser', async (req, res) => {
     }
 
     try {
-        // Hämta prenumerationsdata från Memberful GraphQL
+        // Hämta färsk prenumerationsdata från Memberful GraphQL
         const userResponse = await axios.post(`${CONFIG.MEMBERFUL_BASE_URL}/api/graphql`, {
-            query: `
-                query {
-                    currentMember {
+            query: `{
+                currentMember {
+                    id
+                    email
+                    fullName
+                    subscriptions {
                         id
-                        email
-                        fullName
-                        subscriptions {
-                            id
-                            plan { id name }
-                            active
-                            renewsAt
-                        }
+                        active
+                        renewsAt
+                        plan { id name }
                     }
                 }
-            `
+            }`
         }, {
             headers: {
                 'Authorization': `Bearer ${tokenData.memberful_access_token}`,
@@ -333,8 +357,6 @@ app.post('/oauth2/getUser', async (req, res) => {
                 'Accept': 'application/json'
             }
         });
-
-        console.log('DEBUG - GraphQL response:', JSON.stringify(userResponse.data));
 
         const memberData = userResponse.data.data?.currentMember;
 
@@ -433,7 +455,7 @@ app.get('/config', (req, res) => {
         oauth_config: {
             client_id: 'prenly-mobile',
             supported_grant_types: ['authorization_code', 'refresh_token'],
-            supported_scopes: ['read profile'],
+            supported_scopes: ['read'],
             features: ['refresh_tokens', 'logout', 'userinfo']
         }
     });

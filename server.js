@@ -145,8 +145,9 @@ app.get('/oauth/callback', async (req, res) => {
             }
         );
 
-        const { access_token } = tokenResponse.data;
-        console.log('✅ Got access token from Memberful');
+const { access_token } = tokenResponse.data;
+console.log('✅ Got access token from Memberful');
+console.log('DEBUG - Full token response:', JSON.stringify(tokenResponse.data));
 
         // Använd mockad testdata - Memberful OAuth tokens fungerar inte med deras user API
         const memberData = {

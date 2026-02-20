@@ -20,6 +20,17 @@ const CONFIG = {
     PORT: process.env.PORT || 3000
 };
 
+// Mappning från Memberful-plannamn till Prenly-produktkoder
+const PLAN_TO_PRODUCT = {
+    'Allt om Whisky +': 'AOW'
+};
+
+function mapSubscriptionsToProductCodes(subscriptions) {
+    return subscriptions
+        .filter(sub => sub.active && PLAN_TO_PRODUCT[sub.plan.name])
+        .map(sub => PLAN_TO_PRODUCT[sub.plan.name]);
+}
+
 const userTokens = new Map();
 const sessions = new Map();
 const refreshTokens = new Map();
@@ -42,7 +53,6 @@ async function fetchMemberData(access_token) {
             'Accept': 'application/json'
         }
     });
-    console.log('DEBUG - GraphQL member response:', JSON.stringify(response.data));
     const m = response.data.data?.currentMember;
     if (!m) throw new Error('No currentMember in response');
     return {
@@ -121,7 +131,6 @@ app.get('/oauth/callback', async (req, res) => {
     }
 
     try {
-        // Växla code mot access token med Memberful
         const tokenResponse = await axios.post(`${CONFIG.MEMBERFUL_BASE_URL}/oauth/token`, 
             new URLSearchParams({
                 grant_type: 'authorization_code',
@@ -136,14 +145,14 @@ app.get('/oauth/callback', async (req, res) => {
         const { access_token } = tokenResponse.data;
         console.log('✅ Got access token from Memberful');
 
-        // Hämta användardata via GET /api/graphql/member (kräver OAuth token, ej API key)
         let memberData;
         try {
             memberData = await fetchMemberData(access_token);
+            const productCodes = mapSubscriptionsToProductCodes(memberData.subscriptions);
             console.log('✅ Got real member data:', { 
                 id: memberData.id, 
                 email: memberData.email,
-                plans: memberData.subscriptions.map(s => s.plan.name)
+                productCodes
             });
         } catch (memberError) {
             console.error('❌ Failed to fetch member data:', memberError.response?.data || memberError.message);
@@ -201,7 +210,6 @@ app.post('/oauth/token', async (req, res) => {
         return res.status(401).json({ error: 'invalid_client', error_description: 'Invalid client credentials' });
     }
 
-    // === AUTHORIZATION CODE FLOW ===
     if (grant_type === 'authorization_code') {
         const tokenData = userTokens.get(code);
         if (!tokenData) {
@@ -238,7 +246,6 @@ app.post('/oauth/token', async (req, res) => {
         return;
     }
 
-    // === REFRESH TOKEN FLOW ===
     if (grant_type === 'refresh_token') {
         if (!refresh_token) {
             return res.status(400).json({ error: 'invalid_request', error_description: 'refresh_token parameter required' });
@@ -252,7 +259,6 @@ app.post('/oauth/token', async (req, res) => {
         console.log('🔄 Refreshing access token for user:', refreshData.uid);
 
         try {
-            // Testa om Memberful token fortfarande fungerar
             try {
                 await fetchMemberData(refreshData.memberful_access_token);
             } catch (memberfulError) {
@@ -315,8 +321,8 @@ app.post('/oauth2/getUser', async (req, res) => {
     }
 
     try {
-        // Hämta färsk member-data via GET /api/graphql/member
         const memberData = await fetchMemberData(tokenData.memberful_access_token);
+        const productCodes = mapSubscriptionsToProductCodes(memberData.subscriptions);
 
         const userSummary = {
             uid: memberData.id,
@@ -324,9 +330,7 @@ app.post('/oauth2/getUser', async (req, res) => {
             email: memberData.email,
             givenName: memberData.fullName ? memberData.fullName.split(' ')[0] : null,
             familyName: memberData.fullName ? memberData.fullName.split(' ').slice(1).join(' ') : null,
-            productCodes: memberData.subscriptions
-                .filter(sub => sub.active)
-                .map(sub => sub.plan.name.toLowerCase().replace(/\s+/g, '-')),
+            productCodes,
             limitedProductCodes: [],
             metaData: { favoriteTitleSlugs: [] }
         };
@@ -362,15 +366,15 @@ app.get('/userinfo', (req, res) => {
 
     console.log('✅ UserInfo request for user:', tokenData.uid);
 
+    const productCodes = mapSubscriptionsToProductCodes(tokenData.memberData?.subscriptions || []);
+
     const userInfo = {
         sub: tokenData.uid,
         name: tokenData.memberData?.fullName,
         given_name: tokenData.memberData?.fullName ? tokenData.memberData.fullName.split(' ')[0] : undefined,
         family_name: tokenData.memberData?.fullName ? tokenData.memberData.fullName.split(' ').slice(1).join(' ') : undefined,
         email: tokenData.memberData?.email,
-        products: tokenData.memberData?.subscriptions
-            ?.filter(sub => sub.active)
-            .map(sub => sub.plan.name.toLowerCase().replace(/\s+/g, '-')) || []
+        products: productCodes
     };
 
     Object.keys(userInfo).forEach(key => { if (userInfo[key] === undefined) delete userInfo[key]; });
@@ -396,6 +400,7 @@ app.get('/config', (req, res) => {
         bridge_type: 'Memberful SSO Bridge for Prenly',
         memberful_base_url: CONFIG.MEMBERFUL_BASE_URL,
         bridge_base_url: CONFIG.BRIDGE_BASE_URL,
+        plan_mappings: PLAN_TO_PRODUCT,
         endpoints: {
             mobile_authorize: `${CONFIG.BRIDGE_BASE_URL}/oauth/authorize`,
             mobile_token: `${CONFIG.BRIDGE_BASE_URL}/oauth/token`,
@@ -404,12 +409,6 @@ app.get('/config', (req, res) => {
             logout: `${CONFIG.BRIDGE_BASE_URL}/logout`,
             callback: `${CONFIG.BRIDGE_BASE_URL}/oauth/callback`,
             health: `${CONFIG.BRIDGE_BASE_URL}/health`
-        },
-        oauth_config: {
-            client_id: 'prenly-mobile',
-            supported_grant_types: ['authorization_code', 'refresh_token'],
-            supported_scopes: ['read'],
-            features: ['refresh_tokens', 'logout', 'userinfo']
         }
     });
 });

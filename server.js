@@ -35,9 +35,9 @@ function generateRefreshToken() {
 // === MOBIL APP OAUTH2 BRIDGE ===
 
 app.get('/oauth/authorize', (req, res) => {
-    const { client_id, redirect_uri, response_type = 'code', scope = 'read', state } = req.query;
+    const { client_id, redirect_uri, response_type = 'code', state } = req.query;
 
-    console.log('📱 Mobile OAuth request:', { client_id, redirect_uri, scope, state });
+    console.log('📱 Mobile OAuth request:', { client_id, redirect_uri, scope: 'read profile', state });
 
     if (client_id !== 'prenly-mobile') {
         return res.status(400).json({ error: 'invalid_client_id', error_description: 'Invalid client_id' });
@@ -65,7 +65,7 @@ app.get('/oauth/authorize', (req, res) => {
     memberfulAuthUrl.searchParams.set('response_type', 'code');
     memberfulAuthUrl.searchParams.set('client_id', CONFIG.MEMBERFUL_CLIENT_ID);
     memberfulAuthUrl.searchParams.set('redirect_uri', `${CONFIG.BRIDGE_BASE_URL}/oauth/callback`);
-    memberfulAuthUrl.searchParams.set('scope', scope);
+    memberfulAuthUrl.searchParams.set('scope', 'read profile');
     memberfulAuthUrl.searchParams.set('state', sessionId);
 
     console.log('🔄 Redirecting to Memberful:', memberfulAuthUrl.toString());
@@ -110,6 +110,7 @@ app.get('/oauth/callback', async (req, res) => {
 
         const { access_token } = tokenResponse.data;
         console.log('✅ Got access token from Memberful');
+        console.log('DEBUG - Full token response:', JSON.stringify(tokenResponse.data));
 
         // Hämta användardata via Memberful OAuth userinfo endpoint
         let memberData;
@@ -242,7 +243,7 @@ app.post('/oauth/token', async (req, res) => {
         console.log('🔄 Refreshing access token for user:', refreshData.uid);
 
         try {
-            // Testa om Memberful token fortfarande fungerar via userinfo
+            // Testa om Memberful token fortfarande fungerar
             try {
                 const testResponse = await axios.get(`${CONFIG.MEMBERFUL_BASE_URL}/oauth/userinfo`, {
                     headers: { 'Authorization': `Bearer ${refreshData.memberful_access_token}`, 'Accept': 'application/json' }
@@ -332,6 +333,8 @@ app.post('/oauth2/getUser', async (req, res) => {
                 'Accept': 'application/json'
             }
         });
+
+        console.log('DEBUG - GraphQL response:', JSON.stringify(userResponse.data));
 
         const memberData = userResponse.data.data?.currentMember;
 
@@ -430,7 +433,7 @@ app.get('/config', (req, res) => {
         oauth_config: {
             client_id: 'prenly-mobile',
             supported_grant_types: ['authorization_code', 'refresh_token'],
-            supported_scopes: ['read'],
+            supported_scopes: ['read profile'],
             features: ['refresh_tokens', 'logout', 'userinfo']
         }
     });

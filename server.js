@@ -145,35 +145,61 @@ app.get('/oauth/callback', async (req, res) => {
             }
         );
 
-const { access_token } = tokenResponse.data;
-console.log('✅ Got access token from Memberful');
-console.log('DEBUG - Full token response:', JSON.stringify(tokenResponse.data));
+        const { access_token } = tokenResponse.data;
+        console.log('✅ Got access token from Memberful');
 
-    // Hämta riktig användardata från Memberful REST API
-let memberData;
-try {
-    const memberResponse = await axios.get(`${CONFIG.MEMBERFUL_BASE_URL}/api/json/member.json`, {
-        headers: {
-            'Authorization': `Bearer ${access_token}`,
-            'Accept': 'application/json'
+        // Hämta riktig användardata från Memberful GraphQL API
+        let memberData;
+        try {
+            const memberResponse = await axios.post(`${CONFIG.MEMBERFUL_BASE_URL}/api/graphql/member`, {
+                query: `
+                    query {
+                        currentMember {
+                            id
+                            email
+                            fullName
+                            subscriptions {
+                                id
+                                plan {
+                                    id
+                                    name
+                                }
+                                active
+                            }
+                        }
+                    }
+                `
+            }, {
+                headers: {
+                    'Authorization': `Bearer ${access_token}`,
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                }
+            });
+
+            const m = memberResponse.data.data?.currentMember;
+            if (!m) throw new Error('No member data in response');
+
+            memberData = {
+                id: String(m.id),
+                email: m.email,
+                fullName: m.fullName,
+                subscriptions: (m.subscriptions || []).map(sub => ({
+                    id: String(sub.id),
+                    plan: { id: String(sub.plan.id), name: sub.plan.name },
+                    active: sub.active
+                }))
+            };
+            console.log('✅ Got real member data:', { 
+                id: memberData.id, 
+                email: memberData.email, 
+                plans: memberData.subscriptions.map(s => s.plan.name) 
+            });
+
+        } catch (memberError) {
+            console.error('❌ Failed to fetch member data:', memberError.response?.data || memberError.message);
+            throw memberError;
         }
-    });
-    const m = memberResponse.data.member;
-    memberData = {
-        id: String(m.id),
-        email: m.email,
-        fullName: m.full_name,
-        subscriptions: (m.subscriptions || []).map(sub => ({
-            id: String(sub.id),
-            plan: { id: String(sub.plan.id), name: sub.plan.name },
-            active: sub.active
-        }))
-    };
-    console.log('✅ Got real member data:', { id: memberData.id, email: memberData.email, plans: memberData.subscriptions.map(s => s.plan.name) });
-} catch (memberError) {
-    console.error('❌ Failed to fetch member data:', memberError.response?.data || memberError.message);
-    throw memberError;
-}
 
         // Generera proxy authorization code för appen
         const proxyCode = generateState();
@@ -284,8 +310,6 @@ app.post('/oauth/token', async (req, res) => {
         };
 
         console.log('✅ Access token + refresh token provided to mobile app');
-        console.log('DEBUG - Access token for testing:', proxyAccessToken);
-        console.log('DEBUG - Refresh token for testing:', proxyRefreshToken);
         res.json(response);
         return;
     }
@@ -316,7 +340,7 @@ app.post('/oauth/token', async (req, res) => {
 
             // Testa om Memberful token fortfarande fungerar
             try {
-                const testResponse = await axios.post(`${CONFIG.MEMBERFUL_BASE_URL}/api/graphql`, {
+                const testResponse = await axios.post(`${CONFIG.MEMBERFUL_BASE_URL}/api/graphql/member`, {
                     query: '{ currentMember { id } }'
                 }, {
                     headers: {
@@ -331,7 +355,6 @@ app.post('/oauth/token', async (req, res) => {
                 
             } catch (memberfulError) {
                 console.log('⚠️ Memberful token expired, refresh token invalid');
-                // Om Memberful token är ogiltigt, refresh token är också ogiltigt
                 refreshTokens.delete(refresh_token);
                 return res.status(400).json({ 
                     error: 'invalid_grant',
@@ -360,7 +383,6 @@ app.post('/oauth/token', async (req, res) => {
                 token_type: 'Bearer',
                 expires_in: 3600,
                 scope: 'read'
-                // refresh_token behålls densamma
             };
 
             console.log('✅ Access token refreshed for user:', refreshData.uid);
@@ -441,7 +463,7 @@ app.post('/oauth2/getUser', async (req, res) => {
 
     try {
         // Hämta uppdaterad användardata från Memberful
-        const userResponse = await axios.post(`${CONFIG.MEMBERFUL_BASE_URL}/api/graphql`, {
+        const userResponse = await axios.post(`${CONFIG.MEMBERFUL_BASE_URL}/api/graphql/member`, {
             query: `
                 query {
                     currentMember {
@@ -469,7 +491,7 @@ app.post('/oauth2/getUser', async (req, res) => {
             }
         });
 
-        const memberData = userResponse.data.data.currentMember;
+        const memberData = userResponse.data.data?.currentMember;
 
         if (!memberData) {
             console.error('❌ No member data from Memberful');
@@ -492,10 +514,8 @@ app.post('/oauth2/getUser', async (req, res) => {
                 .filter(sub => sub.active)
                 .map(sub => sub.plan.name.toLowerCase().replace(/\s+/g, '-')),
             
-            // Begränsade product codes (används ej för tillfället)
             limitedProductCodes: [],
             
-            // Meta-data för Prenly-funktioner
             metaData: {
                 favoriteTitleSlugs: []
             }
@@ -513,7 +533,6 @@ app.post('/oauth2/getUser', async (req, res) => {
         console.error('❌ Error fetching user data from Memberful:', error.response?.data || error.message);
         
         if (error.response?.status === 401) {
-            // Memberful token är ogiltigt, logga ut användaren
             userTokens.delete(accessToken);
             return res.status(401).json({ 
                 message: 'Access token expired or invalid',
@@ -554,21 +573,18 @@ app.get('/userinfo', async (req, res) => {
 
     console.log('✅ UserInfo request for user:', tokenData.uid);
 
-    // OpenID Connect UserInfo response enligt Prenly spec
     const userInfo = {
-        sub: tokenData.uid,  // Required: Subject identifier
-        
-        // Optional user identification (för "inloggad som Anna/Johan")
+        sub: tokenData.uid,
         name: tokenData.memberData?.fullName,
         given_name: tokenData.memberData?.fullName ? tokenData.memberData.fullName.split(' ')[0] : undefined,
         family_name: tokenData.memberData?.fullName ? tokenData.memberData.fullName.split(' ').slice(1).join(' ') : undefined,
         email: tokenData.memberData?.email,
-        
-        // Custom claim för Prenly: produktkoder (lägg till "bilaga" för tillgång till bilagor)
-        products: ['AOW', 'bilaga']
+        // Produktkoder från faktiska prenumerationer
+        products: tokenData.memberData?.subscriptions
+            ?.filter(sub => sub.active)
+            .map(sub => sub.plan.name.toLowerCase().replace(/\s+/g, '-')) || []
     };
 
-    // Ta bort undefined-värden
     Object.keys(userInfo).forEach(key => {
         if (userInfo[key] === undefined) {
             delete userInfo[key];
@@ -580,9 +596,6 @@ app.get('/userinfo', async (req, res) => {
 
 // === HJÄLP-ENDPOINTS ===
 
-/**
- * Health check endpoint - uppdaterad med refresh tokens
- */
 app.get('/health', (req, res) => {
     res.json({ 
         status: 'ok',
@@ -594,9 +607,6 @@ app.get('/health', (req, res) => {
     });
 });
 
-/**
- * Configuration endpoint (utan känsliga data)
- */
 app.get('/config', (req, res) => {
     res.json({
         bridge_type: 'Memberful SSO Bridge for Prenly',
@@ -622,9 +632,6 @@ app.get('/config', (req, res) => {
 
 // === LOGOUT ENDPOINTS ===
 
-/**
- * Logout endpoint - POST method - uppdaterad för refresh tokens
- */
 app.post('/logout', async (req, res) => {
     try {
         const authHeader = req.headers.authorization;
@@ -641,13 +648,11 @@ app.post('/logout', async (req, res) => {
         
         let tokensRemoved = 0;
 
-        // Ta bort access token
         if (userTokens.has(token)) {
             const tokenData = userTokens.get(token);
             userTokens.delete(token);
             tokensRemoved++;
 
-            // Hitta och ta bort associerade refresh tokens
             for (const [refreshToken, refreshData] of refreshTokens) {
                 if (refreshData.uid === tokenData.uid) {
                     refreshTokens.delete(refreshToken);
@@ -672,9 +677,6 @@ app.post('/logout', async (req, res) => {
     }
 });
 
-/**
- * Logout endpoint - GET method (för enklare integration)
- */
 app.get('/logout', (req, res) => {
     const { redirect_uri, post_logout_redirect_uri } = req.query;
     const redirectUrl = redirect_uri || post_logout_redirect_uri;
@@ -682,10 +684,8 @@ app.get('/logout', (req, res) => {
     console.log('User accessed logout via GET', { redirectUrl });
     
     if (redirectUrl) {
-        // Redirect tillbaka till appen efter logout
         res.redirect(redirectUrl);
     } else {
-        // Ingen redirect - returnera JSON
         res.json({ 
             success: true, 
             message: 'Logged out successfully' 
@@ -695,18 +695,16 @@ app.get('/logout', (req, res) => {
 
 // === SESSION CLEANUP ===
 
-// Rensa gamla sessioner och tokens varje 10 minuter - uppdaterad för refresh tokens
 setInterval(() => {
     const now = Date.now();
-    const accessTokenMaxAge = 60 * 60 * 1000; // 1 timme för access tokens
-    const refreshTokenMaxAge = 30 * 24 * 60 * 60 * 1000; // 30 dagar för refresh tokens
-    const sessionMaxAge = 10 * 60 * 1000; // 10 minuter för sessions
+    const accessTokenMaxAge = 60 * 60 * 1000;
+    const refreshTokenMaxAge = 30 * 24 * 60 * 60 * 1000;
+    const sessionMaxAge = 10 * 60 * 1000;
 
     let cleanedAccessTokens = 0;
     let cleanedRefreshTokens = 0;
     let cleanedSessions = 0;
 
-    // Rensa gamla access tokens
     for (const [key, data] of userTokens) {
         if (now - data.timestamp > accessTokenMaxAge) {
             userTokens.delete(key);
@@ -714,7 +712,6 @@ setInterval(() => {
         }
     }
 
-    // Rensa gamla refresh tokens
     for (const [key, data] of refreshTokens) {
         if (now - data.timestamp > refreshTokenMaxAge) {
             refreshTokens.delete(key);
@@ -722,7 +719,6 @@ setInterval(() => {
         }
     }
 
-    // Rensa gamla sessions
     for (const [key, session] of sessions) {
         if (now - session.timestamp > sessionMaxAge) {
             sessions.delete(key);

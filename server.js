@@ -22,7 +22,8 @@ const CONFIG = {
 
 // Mappning från Memberful-plannamn till Prenly-produktkoder
 const PLAN_TO_PRODUCT = {
-    'Allt om Whisky +': 'AOW'
+    'Allt om Whisky +': 'AOW',
+    'Allt om Whisky+ helår': 'AOW'
 };
 
 function mapSubscriptionsToProductCodes(subscriptions) {

@@ -73,7 +73,7 @@ async function fetchMemberData(access_token) {
 app.get('/oauth/authorize', (req, res) => {
     const { client_id, redirect_uri, response_type = 'code', state } = req.query;
 
-    console.log('📱 Mobile OAuth request:', { client_id, redirect_uri, state });
+    console.log('📱 Mobile OAuth request:', { client_id, state });
 
     if (client_id !== 'prenly-mobile') {
         return res.status(400).json({ error: 'invalid_client_id', error_description: 'Invalid client_id' });
@@ -152,7 +152,6 @@ app.get('/oauth/callback', async (req, res) => {
             const productCodes = mapSubscriptionsToProductCodes(memberData.subscriptions);
             console.log('✅ Got real member data:', { 
                 id: memberData.id, 
-                email: memberData.email,
                 productCodes
             });
         } catch (memberError) {
@@ -336,7 +335,7 @@ app.post('/oauth2/getUser', async (req, res) => {
             metaData: { favoriteTitleSlugs: [] }
         };
 
-        console.log('✅ User data returned to Prenly:', { uid: userSummary.uid, productCodes: userSummary.productCodes, email: userSummary.email });
+        console.log('✅ User data returned to Prenly:', { uid: userSummary.uid, productCodes: userSummary.productCodes });
         res.json(userSummary);
 
     } catch (error) {

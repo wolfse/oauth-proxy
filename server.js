@@ -21,16 +21,13 @@ const CONFIG = {
 };
 
 // Mappning från Memberful-plannamn till Prenly-produktkoder
-// OBS: Namnen måste matcha exakt vad Memberful returnerar i GraphQL
-// Whiskyklubb-namnen är preliminära — verifiera via Railway-loggarna
 const PLAN_TO_PRODUCT = {
     // AOW+ prenumerationer
     'Allt om Whisky +': 'AOW',
     'Allt om Whisky+ helår': 'AOW',
-    // Whiskyklubbar (lifetime kr6) — namn verifieras via loggning
+    // Whiskyklubbar (lifetime kr6)
     'Aros Whisky': 'AOW',
     'Avesta Whiskysällskap': 'AOW',
-    'Bishop Arms 2025': 'AOW',
     'Enecopia Whisky Academy': 'AOW',
     'Eskilstuna Whiskykultur': 'AOW',
     'HABOST WF': 'AOW',
@@ -74,11 +71,6 @@ async function fetchMemberData(access_token) {
 
     const m = response.data.data?.currentMember;
     if (!m) throw new Error('No currentMember in response');
-
-    // DEBUG: Logga rå subscriptions för att verifiera exakta plan-namn från Memberful
-    console.log('📋 Raw subscriptions:', JSON.stringify(
-        m.subscriptions?.map(s => ({ name: s.plan.name, active: s.active }))
-    ));
 
     return {
         id: String(m.id),

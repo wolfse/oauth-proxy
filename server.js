@@ -22,11 +22,12 @@ const CONFIG = {
 
 // Mappning från Memberful-plannamn till Prenly-produktkoder
 // OBS: Namnen måste matcha exakt vad Memberful returnerar i GraphQL
+// Whiskyklubb-namnen är preliminära — verifiera via Railway-loggarna
 const PLAN_TO_PRODUCT = {
     // AOW+ prenumerationer
     'Allt om Whisky +': 'AOW',
     'Allt om Whisky+ helår': 'AOW',
-    // Whiskyklubbar (lifetime kr6)
+    // Whiskyklubbar (lifetime kr6) — namn verifieras via loggning
     'Aros Whisky': 'AOW',
     'Avesta Whiskysällskap': 'AOW',
     'Bishop Arms 2025': 'AOW',
@@ -38,17 +39,12 @@ const PLAN_TO_PRODUCT = {
     'WAS': 'AOW'
 };
 
-function mapSubscriptionsToProductCodes(subscriptions, orders = []) {
-    const fromSubs = subscriptions
-        .filter(sub => sub.active && PLAN_TO_PRODUCT[sub.plan.name])
-        .map(sub => PLAN_TO_PRODUCT[sub.plan.name]);
-
-    const fromOrders = orders
-        .filter(order => PLAN_TO_PRODUCT[order.plan.name])
-        .map(order => PLAN_TO_PRODUCT[order.plan.name]);
-
-    // Deduplicera — en användare kan ha både subscription och order på samma plan
-    return [...new Set([...fromSubs, ...fromOrders])];
+function mapSubscriptionsToProductCodes(subscriptions) {
+    return [...new Set(
+        subscriptions
+            .filter(sub => sub.active && PLAN_TO_PRODUCT[sub.plan.name])
+            .map(sub => PLAN_TO_PRODUCT[sub.plan.name])
+    )];
 }
 
 const userTokens = new Map();
@@ -63,10 +59,8 @@ function generateRefreshToken() {
     return crypto.randomBytes(32).toString('hex');
 }
 
-// Hämtar både subscriptions och orders för att täcka lifetime-planer
 const MEMBER_QUERY = `{ currentMember { id email fullName 
   subscriptions { id active plan { id name } } 
-  orders { id plan { id name } } 
 } }`;
 
 async function fetchMemberData(access_token) {
@@ -77,8 +71,14 @@ async function fetchMemberData(access_token) {
             'Accept': 'application/json'
         }
     });
+
     const m = response.data.data?.currentMember;
     if (!m) throw new Error('No currentMember in response');
+
+    // DEBUG: Logga rå subscriptions för att verifiera exakta plan-namn från Memberful
+    console.log('📋 Raw subscriptions:', JSON.stringify(
+        m.subscriptions?.map(s => ({ name: s.plan.name, active: s.active }))
+    ));
 
     return {
         id: String(m.id),
@@ -88,10 +88,6 @@ async function fetchMemberData(access_token) {
             id: String(sub.id),
             plan: { id: String(sub.plan.id), name: sub.plan.name },
             active: sub.active
-        })),
-        orders: (m.orders || []).map(order => ({
-            id: String(order.id),
-            plan: { id: String(order.plan.id), name: order.plan.name }
         }))
     };
 }
@@ -177,14 +173,10 @@ app.get('/oauth/callback', async (req, res) => {
         let memberData;
         try {
             memberData = await fetchMemberData(access_token);
-            const productCodes = mapSubscriptionsToProductCodes(memberData.subscriptions, memberData.orders);
+            const productCodes = mapSubscriptionsToProductCodes(memberData.subscriptions);
             console.log('✅ Got real member data:', { 
                 id: memberData.id, 
-                productCodes,
-                planNames: [
-                    ...memberData.subscriptions.map(s => `sub:${s.plan.name}`),
-                    ...memberData.orders.map(o => `order:${o.plan.name}`)
-                ]
+                productCodes
             });
         } catch (memberError) {
             console.error('❌ Failed to fetch member data:', memberError.response?.data || memberError.message);
@@ -354,7 +346,7 @@ app.post('/oauth2/getUser', async (req, res) => {
 
     try {
         const memberData = await fetchMemberData(tokenData.memberful_access_token);
-        const productCodes = mapSubscriptionsToProductCodes(memberData.subscriptions, memberData.orders);
+        const productCodes = mapSubscriptionsToProductCodes(memberData.subscriptions);
 
         const userSummary = {
             uid: memberData.id,
@@ -398,10 +390,7 @@ app.get('/userinfo', (req, res) => {
 
     console.log('✅ UserInfo request for user:', tokenData.uid);
 
-    const productCodes = mapSubscriptionsToProductCodes(
-        tokenData.memberData?.subscriptions || [],
-        tokenData.memberData?.orders || []
-    );
+    const productCodes = mapSubscriptionsToProductCodes(tokenData.memberData?.subscriptions || []);
 
     const userInfo = {
         sub: tokenData.uid,
